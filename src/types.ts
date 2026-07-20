@@ -8,6 +8,19 @@ export interface Model {
   modelId: string;
   name: string;
   description?: string;
+  isCustom?: boolean;  // 标记是否为自定义模型
+}
+
+export interface CustomModel {
+  id: string;
+  modelId: string;
+  name: string;
+  description?: string;
+  provider: string;       // 提供商: openai, anthropic, deepseek, custom 等
+  baseUrl: string;        // API Base URL
+  apiKey: string;         // API Key
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ToolCall {

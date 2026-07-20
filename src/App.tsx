@@ -33,7 +33,7 @@ function AppContent() {
   // Hooks
   const { theme, toggleTheme } = useTheme();
   const { agents, addAgent, updateAgent, deleteAgent, getAgent } = useAgents();
-  const { models, selectedModel, setSelectedModel, fetchModels } = useModels();
+  const { models, customModels, selectedModel, setSelectedModel, fetchModels } = useModels();
   const {
     sessions,
     setSessions,
@@ -135,6 +135,62 @@ function AppContent() {
   // 权限模式状态
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
 
+  // 自定义模型 CRUD
+  const addCustomModel = useCallback(async (model: Omit<import('./types').CustomModel, 'id' | 'createdAt' | 'updatedAt'>) => {
+    try {
+      const res = await fetch('/api/custom-models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modelId: model.modelId,
+          name: model.name,
+          description: model.description || undefined,
+          provider: model.provider,
+          baseUrl: model.baseUrl,
+          apiKey: model.apiKey,
+        }),
+      });
+      if (res.ok) {
+        fetchModels();
+      }
+    } catch (error) {
+      console.error('Failed to add custom model:', error);
+    }
+  }, [fetchModels]);
+
+  const updateCustomModel = useCallback(async (id: string, updates: Partial<Omit<import('./types').CustomModel, 'id' | 'createdAt' | 'updatedAt'>>) => {
+    try {
+      const res = await fetch(`/api/custom-models/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modelId: updates.modelId,
+          name: updates.name,
+          description: updates.description,
+          provider: updates.provider,
+          baseUrl: updates.baseUrl,
+          apiKey: updates.apiKey,
+        }),
+      });
+      if (res.ok) {
+        fetchModels();
+      }
+    } catch (error) {
+      console.error('Failed to update custom model:', error);
+    }
+  }, [fetchModels]);
+
+  const deleteCustomModel = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/custom-models/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchModels();
+      }
+    } catch (error) {
+      console.error('Failed to delete custom model:', error);
+    }
+  }, [fetchModels]);
+
   return (
     <div 
       className="flex h-screen w-screen"
@@ -176,9 +232,13 @@ function AppContent() {
         {isSettingsPage ? (
           <SettingsPage
             agents={agents}
+            customModels={customModels}
             onAdd={addAgent}
             onUpdate={updateAgent}
             onDelete={deleteAgent}
+            onAddCustomModel={addCustomModel}
+            onUpdateCustomModel={updateCustomModel}
+            onDeleteCustomModel={deleteCustomModel}
           />
         ) : (
           <ChatPage

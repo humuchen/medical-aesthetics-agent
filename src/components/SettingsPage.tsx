@@ -10,7 +10,8 @@ import {
   Loading,
   Link,
   Tag,
-  Select
+  Select,
+  Dialog
 } from 'tdesign-react';
 import { 
   AddIcon, 
@@ -19,16 +20,21 @@ import {
   CheckIcon,
   CheckCircleFilledIcon,
   CloseCircleFilledIcon,
-  RefreshIcon
+  RefreshIcon,
+  FolderOpenIcon
 } from 'tdesign-icons-react';
 import { Bot, Sparkles, Code, FileText, Globe, Lightbulb } from 'lucide-react';
-import { CustomAgent, PermissionMode } from '../types';
+import { CustomAgent, CustomModel, PermissionMode } from '../types';
 
 interface SettingsPageProps {
   agents: CustomAgent[];
+  customModels: CustomModel[];
   onAdd: (agent: Omit<CustomAgent, 'id' | 'createdAt' | 'updatedAt'>) => CustomAgent;
   onUpdate: (id: string, updates: Partial<Omit<CustomAgent, 'id' | 'createdAt'>>) => void;
   onDelete: (id: string) => void;
+  onAddCustomModel: (model: Omit<CustomModel, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  onUpdateCustomModel: (id: string, updates: Partial<Omit<CustomModel, 'id' | 'createdAt' | 'updatedAt'>>) => void;
+  onDeleteCustomModel: (id: string) => void;
 }
 
 type LoginMethod = 'env' | 'cli' | 'none';
@@ -61,6 +67,17 @@ const PRESET_ICONS = [
 const PRESET_COLORS = [
   '#0052d9', '#0594fa', '#00a870', '#ed7b2f', 
   '#e34d59', '#a25eb5', '#5c6bc0', '#26a69a'
+];
+
+const MODEL_PROVIDERS = [
+  { value: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1' },
+  { value: 'anthropic', label: 'Anthropic', baseUrl: 'https://api.anthropic.com/v1' },
+  { value: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1' },
+  { value: 'openrouter', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1' },
+  { value: 'siliconflow', label: 'SiliconFlow', baseUrl: 'https://api.siliconflow.cn/v1' },
+  { value: 'zhipu', label: '智谱 (GLM)', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
+  { value: 'moonshot', label: 'Moonshot (Kimi)', baseUrl: 'https://api.moonshot.cn/v1' },
+  { value: 'custom', label: '自定义', baseUrl: '' },
 ];
 
 const PERMISSION_MODES: { value: PermissionMode; label: string; description: string }[] = [
@@ -103,9 +120,13 @@ const PRESET_TEMPLATES = [
 
 export function SettingsPage({ 
   agents, 
+  customModels,
   onAdd, 
   onUpdate, 
-  onDelete 
+  onDelete,
+  onAddCustomModel,
+  onUpdateCustomModel,
+  onDeleteCustomModel,
 }: SettingsPageProps) {
   const [editingAgent, setEditingAgent] = useState<CustomAgent | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -133,6 +154,36 @@ export function SettingsPage({
     baseUrl: '',
   });
   const [savingEnv, setSavingEnv] = useState(false);
+
+  // 自定义模型
+  const [isCreatingModel, setIsCreatingModel] = useState(false);
+  const [editingModel, setEditingModel] = useState<CustomModel | null>(null);
+  const [modelFormData, setModelFormData] = useState({
+    modelId: '',
+    name: '',
+    description: '',
+    provider: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+    apiKey: '',
+  });
+
+  // 数据库管理
+  const [dbStats, setDbStats] = useState<{
+    sessions: number;
+    messages: number;
+    customModels: number;
+    dbSizeKB: number;
+    tables: string[];
+  } | null>(null);
+  const [dbStatsLoading, setDbStatsLoading] = useState(false);
+
+  // 默认对话配置
+  const [defaultAgentId, setDefaultAgentId] = useState(() => 
+    localStorage.getItem('defaultAgentId') || 'default'
+  );
+  const [defaultCwd, setDefaultCwd] = useState(() => 
+    localStorage.getItem('defaultCwd') || ''
+  );
 
   // 检查登录状态
   const checkLoginStatus = useCallback(async () => {
@@ -219,6 +270,102 @@ export function SettingsPage({
     setIsCreating(false);
   };
 
+  const resetModelForm = () => {
+    setModelFormData({
+      modelId: '',
+      name: '',
+      description: '',
+      provider: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: '',
+    });
+    setEditingModel(null);
+    setIsCreatingModel(false);
+  };
+
+  const handleProviderChange = (provider: string) => {
+    const preset = MODEL_PROVIDERS.find(p => p.value === provider);
+    setModelFormData(prev => ({
+      ...prev,
+      provider,
+      baseUrl: preset?.baseUrl || prev.baseUrl,
+    }));
+  };
+
+  const handleEditModel = (model: CustomModel) => {
+    setEditingModel(model);
+    setModelFormData({
+      modelId: model.modelId,
+      name: model.name,
+      description: model.description || '',
+      provider: model.provider,
+      baseUrl: model.baseUrl,
+      apiKey: '',  // 不回显脱敏的 key，留空表示不修改
+    });
+    setIsCreatingModel(true);
+  };
+
+  const handleSaveModel = () => {
+    if (!modelFormData.modelId.trim() || !modelFormData.name.trim() || !modelFormData.baseUrl.trim()) {
+      MessagePlugin.warning('请填写模型 ID、名称和 Base URL');
+      return;
+    }
+    if (!editingModel && !modelFormData.apiKey.trim()) {
+      MessagePlugin.warning('新增模型请填写 API Key');
+      return;
+    }
+
+    if (editingModel) {
+      onUpdateCustomModel(editingModel.id, modelFormData);
+      MessagePlugin.success('自定义模型已更新');
+    } else {
+      onAddCustomModel(modelFormData);
+      MessagePlugin.success('自定义模型已添加');
+    }
+    resetModelForm();
+  };
+
+  const handleDeleteModel = (id: string) => {
+    onDeleteCustomModel(id);
+    MessagePlugin.success('自定义模型已删除');
+  };
+
+  // 数据库管理
+  const fetchDbStats = useCallback(async () => {
+    setDbStatsLoading(true);
+    try {
+      const res = await fetch('/api/db-stats');
+      const data = await res.json();
+      setDbStats(data);
+    } catch (error) {
+      console.error('Failed to fetch db stats:', error);
+    } finally {
+      setDbStatsLoading(false);
+    }
+  }, []);
+
+  const handleClearDb = useCallback(async () => {
+    try {
+      const res = await fetch('/api/db/clear', { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        MessagePlugin.success('数据库已清空');
+        fetchDbStats();
+      } else {
+        MessagePlugin.error(data.error || '清空失败');
+      }
+    } catch (error: any) {
+      MessagePlugin.error(error?.message || '清空数据库失败');
+    }
+  }, [fetchDbStats]);
+
+  // 保存默认对话配置
+  const handleSaveDefaultConfig = () => {
+    localStorage.setItem('defaultAgentId', defaultAgentId);
+    localStorage.setItem('defaultCwd', defaultCwd);
+    MessagePlugin.success('默认对话配置已保存');
+  };
+
   const handleEdit = (agent: CustomAgent) => {
     if (agent.id === 'default') return;
     setEditingAgent(agent);
@@ -282,8 +429,97 @@ export function SettingsPage({
             设置
           </h1>
           <p style={{ color: 'var(--td-text-color-secondary)' }}>
-            管理登录配置和自定义 Agent
+            管理应用配置、自定义模型和 Agent
           </p>
+        </div>
+
+        {/* 默认对话配置 */}
+        <div>
+          <div className="mb-4">
+            <h2 
+              className="text-lg font-medium"
+              style={{ color: 'var(--td-text-color-primary)' }}
+            >
+              默认对话配置
+            </h2>
+            <p 
+              className="text-sm mt-1"
+              style={{ color: 'var(--td-text-color-secondary)' }}
+            >
+              新建对话时默认使用的 Agent 和工作目录
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label 
+                className="text-sm font-medium block mb-2"
+                style={{ color: 'var(--td-text-color-primary)' }}
+              >
+                默认 Agent
+              </label>
+              <div className="grid grid-cols-2 gap-2 max-h-[200px] overflow-y-auto">
+                {agents.map(agent => {
+                  const AgentIcon = getIconComponent(agent.icon || 'Bot');
+                  const isSelected = agent.id === defaultAgentId;
+                  return (
+                    <div
+                      key={agent.id}
+                      className="p-2.5 rounded-lg cursor-pointer transition-all border-2"
+                      style={{
+                        borderColor: isSelected ? (agent.color || 'var(--td-brand-color)') : 'transparent',
+                        backgroundColor: isSelected ? 'var(--td-brand-color-light)' : 'var(--td-bg-color-component)',
+                      }}
+                      onClick={() => setDefaultAgentId(agent.id)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div 
+                          className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
+                          style={{ backgroundColor: agent.color || '#0052d9' }}
+                        >
+                          <AgentIcon size={14} color="white" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium truncate" style={{ color: 'var(--td-text-color-primary)' }}>
+                            {agent.name}
+                          </div>
+                          {agent.description && (
+                            <div className="text-xs truncate" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                              {agent.description}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <label 
+                className="text-sm font-medium block mb-2"
+                style={{ color: 'var(--td-text-color-primary)' }}
+              >
+                默认工作目录 <span style={{ color: 'var(--td-text-color-placeholder)' }}>(可选)</span>
+              </label>
+              <Input
+                value={defaultCwd}
+                onChange={(v) => setDefaultCwd(v as string)}
+                placeholder="例如：/Users/username/projects/my-app"
+                prefixIcon={<FolderOpenIcon />}
+              />
+              <p className="text-xs mt-1.5" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                指定 Agent 的工作目录，用于文件操作等
+              </p>
+            </div>
+
+            <div className="flex justify-end">
+              <Button theme="primary" onClick={handleSaveDefaultConfig}>
+                保存配置
+              </Button>
+            </div>
+          </div>
         </div>
 
         {/* 登录配置 */}
@@ -507,6 +743,197 @@ export function SettingsPage({
               {loginStatus.error}
             </div>
           )}
+        </div>
+
+        <div 
+          style={{ 
+            height: '1px', 
+            backgroundColor: 'var(--td-component-border)' 
+          }} 
+        />
+
+        {/* 自定义模型配置 */}
+        <div>
+          <div className="mb-4">
+            <h2 
+              className="text-lg font-medium"
+              style={{ color: 'var(--td-text-color-primary)' }}
+            >
+              自定义模型
+            </h2>
+            <p 
+              className="text-sm mt-1"
+              style={{ color: 'var(--td-text-color-secondary)' }}
+            >
+              添加 OpenAI 兼容 API 的自定义模型
+            </p>
+          </div>
+
+          <div className="space-y-6">
+            {/* 创建/编辑表单 */}
+            {isCreatingModel ? (
+              <div 
+                className="p-5 rounded-xl border"
+                style={{ 
+                  backgroundColor: 'var(--td-bg-color-container)',
+                  borderColor: 'var(--td-component-border)'
+                }}
+              >
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center mb-2">
+                    <h4 className="text-base font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+                      {editingModel ? '编辑自定义模型' : '添加自定义模型'}
+                    </h4>
+                    <Button variant="text" onClick={resetModelForm}>取消</Button>
+                  </div>
+                  
+                  <Form labelAlign="top">
+                    <div className="grid grid-cols-2 gap-3">
+                      <Form.FormItem label="提供商" requiredMark>
+                        <Select
+                          value={modelFormData.provider}
+                          onChange={(v) => handleProviderChange(v as string)}
+                          style={{ width: '100%' }}
+                        >
+                          {MODEL_PROVIDERS.map(p => (
+                            <Select.Option key={p.value} value={p.value} label={p.label} />
+                          ))}
+                        </Select>
+                      </Form.FormItem>
+                      
+                      <Form.FormItem label="模型 ID" requiredMark>
+                        <Input 
+                          value={modelFormData.modelId}
+                          onChange={(v) => setModelFormData(prev => ({ ...prev, modelId: v as string }))}
+                          placeholder="例如：gpt-4o、deepseek-chat"
+                        />
+                      </Form.FormItem>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-3">
+                      <Form.FormItem label="显示名称" requiredMark>
+                        <Input 
+                          value={modelFormData.name}
+                          onChange={(v) => setModelFormData(prev => ({ ...prev, name: v as string }))}
+                          placeholder="例如：GPT-4o、DeepSeek Chat"
+                        />
+                      </Form.FormItem>
+                      
+                      <Form.FormItem label="描述">
+                        <Input 
+                          value={modelFormData.description}
+                          onChange={(v) => setModelFormData(prev => ({ ...prev, description: v as string }))}
+                          placeholder="可选的模型描述"
+                        />
+                      </Form.FormItem>
+                    </div>
+                    
+                    <Form.FormItem label="Base URL" requiredMark>
+                      <Input 
+                        value={modelFormData.baseUrl}
+                        onChange={(v) => setModelFormData(prev => ({ ...prev, baseUrl: v as string }))}
+                        placeholder="https://api.openai.com/v1"
+                      />
+                    </Form.FormItem>
+                    
+                    <Form.FormItem label="API Key" requiredMark={!editingModel}>
+                      <Input 
+                        type="password"
+                        value={modelFormData.apiKey}
+                        onChange={(v) => setModelFormData(prev => ({ ...prev, apiKey: v as string }))}
+                        placeholder={editingModel ? '留空则不修改' : 'sk-...'}
+                      />
+                    </Form.FormItem>
+                  </Form>
+                  
+                  <div className="flex justify-end gap-2 pt-2">
+                    <Button variant="outline" onClick={resetModelForm}>取消</Button>
+                    <Button theme="primary" onClick={handleSaveModel}>
+                      {editingModel ? '保存修改' : '添加模型'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <Button 
+                  icon={<AddIcon />} 
+                  variant="dashed" 
+                  block 
+                  onClick={() => setIsCreatingModel(true)}
+                >
+                  添加自定义模型
+                </Button>
+
+                {/* 已有的自定义模型 */}
+                {customModels.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium mb-3" style={{ color: 'var(--td-text-color-secondary)' }}>
+                      已添加的模型 ({customModels.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {customModels.map(model => {
+                        const providerLabel = MODEL_PROVIDERS.find(p => p.value === model.provider)?.label || model.provider;
+                        return (
+                          <div 
+                            key={model.id} 
+                            className="p-3 rounded-lg"
+                            style={{ backgroundColor: 'var(--td-bg-color-component)' }}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div 
+                                className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                                style={{ backgroundColor: '#0594fa' }}
+                              >
+                                <Sparkles size={20} color="white" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+                                    {model.name}
+                                  </span>
+                                  <Tag size="small" variant="outline" style={{ fontSize: '10px' }}>
+                                    {providerLabel}
+                                  </Tag>
+                                </div>
+                                <div className="text-xs truncate" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                                  {model.modelId} · {model.baseUrl}
+                                </div>
+                              </div>
+                              <div className="flex gap-1">
+                                <Tooltip content="编辑">
+                                  <Button 
+                                    variant="text" 
+                                    shape="circle" 
+                                    size="small"
+                                    icon={<EditIcon />}
+                                    onClick={() => handleEditModel(model)}
+                                  />
+                                </Tooltip>
+                                <Popconfirm
+                                  content="确定删除这个模型吗？"
+                                  onConfirm={() => handleDeleteModel(model.id)}
+                                >
+                                  <Tooltip content="删除">
+                                    <Button 
+                                      variant="text" 
+                                      shape="circle" 
+                                      size="small"
+                                      icon={<DeleteIcon />}
+                                    />
+                                  </Tooltip>
+                                </Popconfirm>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
 
         <div 
@@ -755,6 +1182,199 @@ export function SettingsPage({
                 </>
               )}
             </div>
+        </div>
+
+        <div 
+          style={{ 
+            height: '1px', 
+            backgroundColor: 'var(--td-component-border)' 
+          }} 
+        />
+
+        {/* 数据库管理 */}
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 
+                className="text-lg font-medium"
+                style={{ color: 'var(--td-text-color-primary)' }}
+              >
+                数据库管理
+              </h2>
+              <p 
+                className="text-sm mt-1"
+                style={{ color: 'var(--td-text-color-secondary)' }}
+              >
+                查看数据库状态和管理数据
+              </p>
+            </div>
+            <Button 
+              variant="text" 
+              icon={<RefreshIcon />}
+              onClick={fetchDbStats}
+              loading={dbStatsLoading}
+            >
+              刷新
+            </Button>
+          </div>
+
+          {dbStats ? (
+            <div className="space-y-4">
+              {/* 统计卡片 */}
+              <div className="grid grid-cols-4 gap-3">
+                <div 
+                  className="p-4 rounded-lg text-center"
+                  style={{ backgroundColor: 'var(--td-bg-color-component)' }}
+                >
+                  <div 
+                    className="text-2xl font-semibold"
+                    style={{ color: 'var(--td-brand-color)' }}
+                  >
+                    {dbStats.sessions}
+                  </div>
+                  <div 
+                    className="text-xs mt-1"
+                    style={{ color: 'var(--td-text-color-placeholder)' }}
+                  >
+                    会话
+                  </div>
+                </div>
+                <div 
+                  className="p-4 rounded-lg text-center"
+                  style={{ backgroundColor: 'var(--td-bg-color-component)' }}
+                >
+                  <div 
+                    className="text-2xl font-semibold"
+                    style={{ color: 'var(--td-brand-color)' }}
+                  >
+                    {dbStats.messages}
+                  </div>
+                  <div 
+                    className="text-xs mt-1"
+                    style={{ color: 'var(--td-text-color-placeholder)' }}
+                  >
+                    消息
+                  </div>
+                </div>
+                <div 
+                  className="p-4 rounded-lg text-center"
+                  style={{ backgroundColor: 'var(--td-bg-color-component)' }}
+                >
+                  <div 
+                    className="text-2xl font-semibold"
+                    style={{ color: 'var(--td-brand-color)' }}
+                  >
+                    {dbStats.customModels}
+                  </div>
+                  <div 
+                    className="text-xs mt-1"
+                    style={{ color: 'var(--td-text-color-placeholder)' }}
+                  >
+                    自定义模型
+                  </div>
+                </div>
+                <div 
+                  className="p-4 rounded-lg text-center"
+                  style={{ backgroundColor: 'var(--td-bg-color-component)' }}
+                >
+                  <div 
+                    className="text-2xl font-semibold"
+                    style={{ color: 'var(--td-brand-color)' }}
+                  >
+                    {dbStats.dbSizeKB >= 1024 ? `${(dbStats.dbSizeKB / 1024).toFixed(1)}M` : `${dbStats.dbSizeKB}K`}
+                  </div>
+                  <div 
+                    className="text-xs mt-1"
+                    style={{ color: 'var(--td-text-color-placeholder)' }}
+                  >
+                    文件大小
+                  </div>
+                </div>
+              </div>
+
+              {/* 表信息 */}
+              <div 
+                className="p-3 rounded-lg"
+                style={{ backgroundColor: 'var(--td-bg-color-component)' }}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span 
+                      className="text-sm font-medium"
+                      style={{ color: 'var(--td-text-color-primary)' }}
+                    >
+                      数据表
+                    </span>
+                    <span 
+                      className="text-xs font-mono"
+                      style={{ color: 'var(--td-text-color-placeholder)' }}
+                    >
+                      ({dbStats.tables.length})
+                    </span>
+                  </div>
+                  <div className="flex gap-1.5">
+                    {dbStats.tables.map(table => (
+                      <Tag 
+                        key={table} 
+                        size="small" 
+                        variant="outline"
+                        style={{ fontSize: '10px' }}
+                      >
+                        {table}
+                      </Tag>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* 危险操作 */}
+              <div 
+                className="p-4 rounded-lg border"
+                style={{ 
+                  backgroundColor: 'var(--td-bg-color-container)',
+                  borderColor: 'var(--td-error-color-border, #fde2e2)'
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div 
+                      className="text-sm font-medium"
+                      style={{ color: 'var(--td-text-color-primary)' }}
+                    >
+                      清空数据库
+                    </div>
+                    <div 
+                      className="text-xs mt-1"
+                      style={{ color: 'var(--td-text-color-placeholder)' }}
+                    >
+                      删除所有会话、消息和自定义模型配置，此操作不可恢复
+                    </div>
+                  </div>
+                  <Popconfirm
+                    content="确定要清空数据库吗？所有数据将被永久删除且无法恢复！"
+                    onConfirm={handleClearDb}
+                  >
+                    <Button 
+                      theme="danger"
+                      variant="outline"
+                      size="small"
+                      icon={<DeleteIcon />}
+                    >
+                      清空
+                    </Button>
+                  </Popconfirm>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <Button 
+              variant="outline" 
+              onClick={fetchDbStats}
+              loading={dbStatsLoading}
+            >
+              加载数据库信息
+            </Button>
+          )}
         </div>
       </div>
     </div>

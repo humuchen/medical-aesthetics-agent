@@ -47,6 +47,19 @@ db.exec(`
 
   -- 为会话 ID 创建索引
   CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
+
+  -- 自定义模型表
+  CREATE TABLE IF NOT EXISTS custom_models (
+    id TEXT PRIMARY KEY,
+    model_id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    description TEXT,
+    provider TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    api_key TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
 `);
 
 // 数据库迁移：添加 sdk_session_id 列（如果不存在）
@@ -222,6 +235,105 @@ export function createMessages(messages: DbMessage[]): void {
 export function clearAllData(): void {
   db.exec('DELETE FROM messages');
   db.exec('DELETE FROM sessions');
+  db.exec('DELETE FROM custom_models');
+}
+
+// 获取数据库统计信息
+export function getDbStats(): {
+  sessions: number;
+  messages: number;
+  customModels: number;
+  dbSizeKB: number;
+  tables: string[];
+} {
+  const sessionCount = (db.prepare('SELECT COUNT(*) as count FROM sessions').get() as any).count;
+  const messageCount = (db.prepare('SELECT COUNT(*) as count FROM messages').get() as any).count;
+  const customModelCount = (db.prepare('SELECT COUNT(*) as count FROM custom_models').get() as any).count;
+
+  // 获取数据库文件大小
+  let dbSizeKB = 0;
+  try {
+    const stat = fs.statSync(dbPath);
+    dbSizeKB = Math.round(stat.size / 1024);
+  } catch {}
+
+  // 获取表列表
+  const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{ name: string }>)
+    .map(t => t.name);
+
+  return {
+    sessions: sessionCount,
+    messages: messageCount,
+    customModels: customModelCount,
+    dbSizeKB,
+    tables,
+  };
+}
+
+// ============= 自定义模型操作 =============
+
+export interface DbCustomModel {
+  id: string;
+  model_id: string;
+  name: string;
+  description: string | null;
+  provider: string;
+  base_url: string;
+  api_key: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// 获取所有自定义模型
+export function getAllCustomModels(): DbCustomModel[] {
+  const stmt = db.prepare('SELECT * FROM custom_models ORDER BY created_at DESC');
+  return stmt.all() as DbCustomModel[];
+}
+
+// 获取单个自定义模型
+export function getCustomModel(id: string): DbCustomModel | undefined {
+  const stmt = db.prepare('SELECT * FROM custom_models WHERE id = ?');
+  return stmt.get(id) as DbCustomModel | undefined;
+}
+
+// 创建自定义模型
+export function createCustomModel(model: DbCustomModel): DbCustomModel {
+  const stmt = db.prepare(`
+    INSERT INTO custom_models (id, model_id, name, description, provider, base_url, api_key, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  stmt.run(model.id, model.model_id, model.name, model.description, model.provider, model.base_url, model.api_key, model.created_at, model.updated_at);
+  return model;
+}
+
+// 更新自定义模型
+export function updateCustomModel(id: string, updates: Partial<Pick<DbCustomModel, 'model_id' | 'name' | 'description' | 'provider' | 'base_url' | 'api_key'>>): boolean {
+  const fields: string[] = [];
+  const values: any[] = [];
+
+  if (updates.model_id !== undefined) { fields.push('model_id = ?'); values.push(updates.model_id); }
+  if (updates.name !== undefined) { fields.push('name = ?'); values.push(updates.name); }
+  if (updates.description !== undefined) { fields.push('description = ?'); values.push(updates.description); }
+  if (updates.provider !== undefined) { fields.push('provider = ?'); values.push(updates.provider); }
+  if (updates.base_url !== undefined) { fields.push('base_url = ?'); values.push(updates.base_url); }
+  if (updates.api_key !== undefined) { fields.push('api_key = ?'); values.push(updates.api_key); }
+
+  if (fields.length === 0) return false;
+
+  fields.push('updated_at = ?');
+  values.push(new Date().toISOString());
+  values.push(id);
+
+  const stmt = db.prepare(`UPDATE custom_models SET ${fields.join(', ')} WHERE id = ?`);
+  const result = stmt.run(...values);
+  return result.changes > 0;
+}
+
+// 删除自定义模型
+export function deleteCustomModel(id: string): boolean {
+  const stmt = db.prepare('DELETE FROM custom_models WHERE id = ?');
+  const result = stmt.run(id);
+  return result.changes > 0;
 }
 
 export default db;

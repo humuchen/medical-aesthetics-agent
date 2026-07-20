@@ -121,7 +121,12 @@ export function ChatInput({
               suffixIcon={<ChevronDownIcon />}
             >
               {models.map(model => (
-                <Select.Option key={model.modelId} value={model.modelId} label={model.name} />
+                <Select.Option key={model.modelId} value={model.modelId} label={model.name}>
+                  <div className="flex items-center gap-1.5">
+                    {model.isCustom && <span style={{ color: '#0594fa', fontSize: 10 }}>★</span>}
+                    <span>{model.name}</span>
+                  </div>
+                </Select.Option>
               ))}
             </Select>
             

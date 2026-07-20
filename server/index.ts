@@ -5,7 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { exec } from "child_process";
 import { promisify } from "util";
-import * as db from "./db.js";
+import * as db from "./db";
 
 const execAsync = promisify(exec);
 
@@ -40,6 +40,29 @@ const defaultModel = "claude-sonnet-4";
 // 健康检查
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// 数据库统计信息
+app.get("/api/db-stats", (req, res) => {
+  try {
+    const stats = db.getDbStats();
+    res.json(stats);
+  } catch (error: any) {
+    console.error("[DB Stats] Error:", error);
+    res.status(500).json({ error: error?.message || "获取数据库统计失败" });
+  }
+});
+
+// 清空数据库
+app.delete("/api/db/clear", (req, res) => {
+  try {
+    db.clearAllData();
+    cachedModels = [];
+    res.json({ success: true, message: "数据库已清空" });
+  } catch (error: any) {
+    console.error("[DB Clear] Error:", error);
+    res.status(500).json({ error: error?.message || "清空数据库失败" });
+  }
 });
 
 // 登录方式类型
@@ -219,6 +242,104 @@ app.get("/api/models", async (req, res) => {
   }
 });
 
+// ============= 自定义模型 API =============
+
+// 获取所有自定义模型
+app.get("/api/custom-models", (req, res) => {
+  try {
+    const models = db.getAllCustomModels();
+    // 脱敏 API Key
+    const sanitized = models.map(m => ({
+      ...m,
+      api_key: m.api_key.slice(0, 6) + '****' + m.api_key.slice(-4),
+    }));
+    res.json({ models: sanitized });
+  } catch (error: any) {
+    console.error("[Custom Models] Error:", error);
+    res.status(500).json({ error: error?.message || "获取自定义模型失败" });
+  }
+});
+
+// 创建自定义模型
+app.post("/api/custom-models", (req, res) => {
+  try {
+    const { modelId, name, description, provider, baseUrl, apiKey } = req.body;
+
+    if (!modelId || !name || !provider || !baseUrl || !apiKey) {
+      return res.status(400).json({ error: "缺少必填字段（modelId, name, provider, baseUrl, apiKey）" });
+    }
+
+    const now = new Date().toISOString();
+    const model = db.createCustomModel({
+      id: uuidv4(),
+      model_id: modelId,
+      name,
+      description: description || null,
+      provider,
+      base_url: baseUrl,
+      api_key: apiKey,
+      created_at: now,
+      updated_at: now,
+    });
+
+    res.json({
+      model: {
+        ...model,
+        api_key: model.api_key.slice(0, 6) + '****' + model.api_key.slice(-4),
+      }
+    });
+  } catch (error: any) {
+    console.error("[Custom Models] Create Error:", error);
+    if (error?.message?.includes('UNIQUE')) {
+      return res.status(400).json({ error: "模型 ID 已存在" });
+    }
+    res.status(500).json({ error: error?.message || "创建自定义模型失败" });
+  }
+});
+
+// 更新自定义模型
+app.patch("/api/custom-models/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const { modelId, name, description, provider, baseUrl, apiKey } = req.body;
+
+    const success = db.updateCustomModel(id, {
+      ...(modelId !== undefined && { model_id: modelId }),
+      ...(name !== undefined && { name }),
+      ...(description !== undefined && { description }),
+      ...(provider !== undefined && { provider }),
+      ...(baseUrl !== undefined && { base_url: baseUrl }),
+      ...(apiKey && { api_key: apiKey }),  // 仅在 apiKey 非空时更新
+    });
+
+    if (!success) {
+      return res.status(404).json({ error: "自定义模型不存在" });
+    }
+
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error("[Custom Models] Update Error:", error);
+    res.status(500).json({ error: error?.message || "更新自定义模型失败" });
+  }
+});
+
+// 删除自定义模型
+app.delete("/api/custom-models/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const success = db.deleteCustomModel(id);
+
+    if (!success) {
+      return res.status(404).json({ error: "自定义模型不存在" });
+    }
+
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error("[Custom Models] Delete Error:", error);
+    res.status(500).json({ error: error?.message || "删除自定义模型失败" });
+  }
+});
+
 // ============= 会话 API =============
 
 // 获取所有会话（包含消息数量）
@@ -381,7 +502,7 @@ app.post("/api/chat", async (req, res) => {
       id: sessionId || uuidv4(),
       title: message.slice(0, 30) + (message.length > 30 ? '...' : ''),
       model: model || defaultModel,
-      sdk_session_id: null,  // 稍后从 SDK 获取
+      sdk_session_id: null,
       created_at: now,
       updated_at: now
     });
@@ -391,9 +512,6 @@ app.post("/api/chat", async (req, res) => {
 
   const selectedModel = model || session.model;
   
-  // 获取 SDK session ID（用于恢复对话）
-  const sdkSessionId = session.sdk_session_id;
-
   // 创建用户消息 ID 和助手消息 ID
   const userMessageId = uuidv4();
   const assistantMessageId = uuidv4();
@@ -422,8 +540,136 @@ app.post("/api/chat", async (req, res) => {
 
   // 默认系统提示词
   const defaultSystemPrompt = "你是「医美数据决策助手」，一名深耕医疗美容行业的运营数据分析与决策支持专家。整合医美机构分散在 HIS/CRM、企微、美团/大众点评、抖音、有赞及 Excel 台账中的多源数据，做经营与运营分析（营收毛利、客单价、到店率、升单率、复购率、渠道 CAC/ROI、转化漏斗等），并输出结构化、可落地的决策建议（核心结论→关键指标→数据洞察→行动建议→风险提示）。不编造数据，结论注明来源与口径；医美宣称需合规。能用工具（读取文件、Python/pandas、生成图表报告）就使用。";
-  
-  // 工作目录：优先使用请求中的 cwd，否则使用当前目录
+
+  // ============= 检查是否为自定义模型 =============
+  const customModel = db.getAllCustomModels().find(m => m.model_id === selectedModel);
+
+  if (customModel) {
+    // 自定义模型：直接调用 OpenAI 兼容 API
+    console.log(`[Chat] 使用自定义模型: ${customModel.name} (${customModel.model_id})`);
+    console.log(`[Chat] Base URL: ${customModel.base_url}`);
+
+    let fullResponse = "";
+
+    // 发送 init 事件
+    res.write(`data: ${JSON.stringify({ 
+      type: "init", 
+      sessionId: session.id, 
+      userMessageId, 
+      assistantMessageId,
+      model: selectedModel 
+    })}\n\n`);
+
+    try {
+      // 获取历史消息构建对话上下文
+      const historyMessages = db.getMessagesBySession(session.id);
+      const chatMessages: Array<{ role: string; content: string }> = [];
+
+      // 添加系统提示词
+      chatMessages.push({ role: "system", content: systemPrompt || defaultSystemPrompt });
+
+      // 添加历史消息
+      for (const msg of historyMessages) {
+        chatMessages.push({ role: msg.role, content: msg.content });
+      }
+
+      // 调用 OpenAI 兼容 API（流式）
+      const apiUrl = `${customModel.base_url.replace(/\/$/, '')}/chat/completions`;
+      const apiResponse = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${customModel.api_key}`,
+        },
+        body: JSON.stringify({
+          model: customModel.model_id,
+          messages: chatMessages,
+          stream: true,
+        }),
+      });
+
+      if (!apiResponse.ok) {
+        const errorText = await apiResponse.text();
+        console.error(`[Chat] API 错误: ${apiResponse.status} ${errorText}`);
+        res.write(`data: ${JSON.stringify({ type: "error", message: `API 错误 (${apiResponse.status}): ${errorText.slice(0, 200)}` })}\n\n`);
+        res.end();
+        return;
+      }
+
+      // 处理 SSE 流式响应
+      const reader = apiResponse.body?.getReader();
+      if (!reader) {
+        res.write(`data: ${JSON.stringify({ type: "error", message: "无法读取 API 响应流" })}\n\n`);
+        res.end();
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith('data: ')) continue;
+
+          const data = trimmed.slice(6);
+          if (data === '[DONE]') continue;
+
+          try {
+            const parsed = JSON.parse(data);
+            const delta = parsed.choices?.[0]?.delta;
+            if (delta?.content) {
+              fullResponse += delta.content;
+              res.write(`data: ${JSON.stringify({ type: "text", content: delta.content })}\n\n`);
+            }
+          } catch {
+            // 忽略解析错误
+          }
+        }
+      }
+
+      // 发送完成事件
+      res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+
+      // 保存助手消息
+      db.createMessage({
+        id: assistantMessageId,
+        session_id: session.id,
+        role: 'assistant',
+        content: fullResponse,
+        model: selectedModel,
+        created_at: new Date().toISOString(),
+        tool_calls: null
+      });
+
+      // 更新会话标题
+      const msgs = db.getMessagesBySession(session.id);
+      if (msgs.length <= 2) {
+        db.updateSession(session.id, { 
+          title: message.slice(0, 30) + (message.length > 30 ? '...' : ''),
+          model: selectedModel
+        });
+      }
+
+      console.log(`[Chat] 自定义模型请求完成 ✓`);
+      res.end();
+    } catch (error: any) {
+      console.error(`[Chat] 自定义模型错误:`, error);
+      res.write(`data: ${JSON.stringify({ type: "error", message: error?.message || "请求自定义模型失败" })}\n\n`);
+      res.end();
+    }
+    return;
+  }
+
+  // ============= CodeBuddy SDK 模型（原有逻辑） =============
+  const sdkSessionId = session.sdk_session_id;
   const workingDir = cwd || process.cwd();
 
   try {

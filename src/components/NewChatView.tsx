@@ -1,5 +1,3 @@
-import { Input } from 'tdesign-react';
-import { FolderOpenIcon } from 'tdesign-icons-react';
 import { Bot } from 'lucide-react';
 import { APP_CONFIG } from '../config';
 import { Model, Agent, PermissionMode } from '../types';
@@ -31,9 +29,6 @@ export function NewChatView({
   agents,
   newChatAgentId,
   newChatCwd,
-  onSelectAgent,
-  onSetCwd,
-  onSetPermissionMode,
   onExampleClick,
 }: NewChatViewProps) {
   const selectedAgent = agents.find(a => a.id === newChatAgentId);
@@ -58,79 +53,14 @@ export function NewChatView({
             {APP_CONFIG.name}
           </h2>
           <p style={{ color: 'var(--td-text-color-secondary)' }}>
-            选择一个 Agent 开始对话
-          </p>
-        </div>
-        
-        {/* Agent 选择 */}
-        <div className="mb-6">
-          <label className="block text-sm font-medium mb-3" style={{ color: 'var(--td-text-color-primary)' }}>
-            选择 Agent
-          </label>
-          <div className="grid grid-cols-2 gap-3 max-h-[280px] overflow-y-auto">
-            {agents.map(agent => {
-              const AgentIcon = ICON_MAP[agent.icon || 'Bot'] || Bot;
-              const isSelected = agent.id === newChatAgentId;
-              return (
-                <div
-                  key={agent.id}
-                  className="p-3 rounded-xl cursor-pointer transition-all border-2"
-                  style={{
-                    borderColor: isSelected ? (agent.color || 'var(--td-brand-color)') : 'transparent',
-                    backgroundColor: isSelected ? 'var(--td-brand-color-light)' : 'var(--td-bg-color-component)',
-                  }}
-                  onClick={() => {
-                    onSelectAgent(agent.id);
-                    // 自动应用 Agent 的默认权限模式
-                    if (agent.permissionMode) {
-                      onSetPermissionMode(agent.permissionMode);
-                    }
-                  }}
-                >
-                  <div className="flex items-center gap-3">
-                    <div 
-                      className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
-                      style={{ backgroundColor: agent.color || '#0052d9' }}
-                    >
-                      <AgentIcon size={20} color="white" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium truncate" style={{ color: 'var(--td-text-color-primary)' }}>
-                        {agent.name}
-                      </div>
-                      {agent.description && (
-                        <div className="text-xs truncate mt-0.5" style={{ color: 'var(--td-text-color-placeholder)' }}>
-                          {agent.description}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* 工作目录 */}
-        <div className="mb-6">
-          <label className="block text-sm font-medium mb-2" style={{ color: 'var(--td-text-color-primary)' }}>
-            工作目录 <span style={{ color: 'var(--td-text-color-placeholder)' }}>(可选)</span>
-          </label>
-          <Input
-            value={newChatCwd}
-            onChange={(v) => onSetCwd(v as string)}
-            placeholder="例如：/Users/username/projects/my-app"
-            prefixIcon={<FolderOpenIcon />}
-          />
-          <p className="text-xs mt-1.5" style={{ color: 'var(--td-text-color-placeholder)' }}>
-            指定 Agent 的工作目录，用于文件操作等
+            开始新对话
           </p>
         </div>
 
-        {/* 选中的 Agent 预览 */}
+        {/* 当前默认 Agent 预览 */}
         {selectedAgent && (
           <div 
-            className="p-4 rounded-xl"
+            className="p-4 rounded-xl mb-6"
             style={{ backgroundColor: 'var(--td-bg-color-component)' }}
           >
             <div className="flex items-center gap-2">
@@ -139,29 +69,39 @@ export function NewChatView({
                 return (
                   <>
                     <div 
-                      className="w-6 h-6 rounded-md flex items-center justify-center"
+                      className="w-8 h-8 rounded-lg flex items-center justify-center"
                       style={{ backgroundColor: selectedAgent.color || '#0052d9' }}
                     >
-                      <Icon size={14} color="white" />
+                      <Icon size={18} color="white" />
                     </div>
-                    <span className="text-sm font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
-                      {selectedAgent.name}
-                    </span>
+                    <div>
+                      <span className="text-sm font-medium block" style={{ color: 'var(--td-text-color-primary)' }}>
+                        {selectedAgent.name}
+                      </span>
+                      {selectedAgent.description && (
+                        <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                          {selectedAgent.description}
+                        </span>
+                      )}
+                    </div>
                   </>
                 );
               })()}
             </div>
-            {selectedAgent.description && (
-              <p className="text-xs mt-2" style={{ color: 'var(--td-text-color-secondary)' }}>
-                {selectedAgent.description}
-              </p>
+            {newChatCwd && (
+              <div className="mt-2 text-xs font-mono truncate" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                📁 {newChatCwd}
+              </div>
             )}
+            <p className="text-xs mt-2" style={{ color: 'var(--td-text-color-placeholder)' }}>
+              可在「设置 → 默认对话配置」中修改默认 Agent 和工作目录
+            </p>
           </div>
         )}
         
         {/* 示例提问 */}
         {onExampleClick && (
-          <div className="mt-6">
+          <div className="mb-6">
             <p className="text-sm font-medium mb-3" style={{ color: 'var(--td-text-color-primary)' }}>
               试试这样问
             </p>

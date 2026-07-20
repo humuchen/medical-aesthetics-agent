@@ -49,9 +49,13 @@ export function ChatPage({
   const navigate = useNavigate();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
-  // 新对话页面状态
-  const [newChatAgentId, setNewChatAgentId] = useState('default');
-  const [newChatCwd, setNewChatCwd] = useState('');
+  // 新对话页面状态：从 localStorage 读取默认值
+  const [newChatAgentId, setNewChatAgentId] = useState(() => 
+    localStorage.getItem('defaultAgentId') || 'default'
+  );
+  const [newChatCwd, setNewChatCwd] = useState(() => 
+    localStorage.getItem('defaultCwd') || ''
+  );
 
   // 自动滚动到底部
   useEffect(() => {
@@ -69,9 +73,9 @@ export function ChatPage({
         cwd: newChatCwd,
         permissionMode: effectivePermissionMode,
       }, (path) => {
-        // 重置新对话选项
-        setNewChatAgentId('default');
-        setNewChatCwd('');
+        // 重置新对话选项为默认值
+        setNewChatAgentId(localStorage.getItem('defaultAgentId') || 'default');
+        setNewChatCwd(localStorage.getItem('defaultCwd') || '');
         navigate(path);
       });
     } else {
