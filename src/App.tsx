@@ -8,6 +8,7 @@ import { useSessions } from './hooks/useSessions';
 import { useModels } from './hooks/useModels';
 import { useChat } from './hooks/useChat';
 import { PermissionMode } from './types';
+import { API_PATHS } from './constants/api';
 
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -137,57 +138,54 @@ function AppContent() {
 
   // 自定义模型 CRUD
   const addCustomModel = useCallback(async (model: Omit<import('./types').CustomModel, 'id' | 'createdAt' | 'updatedAt'>) => {
-    try {
-      const res = await fetch('/api/custom-models', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          modelId: model.modelId,
-          name: model.name,
-          description: model.description || undefined,
-          provider: model.provider,
-          baseUrl: model.baseUrl,
-          apiKey: model.apiKey,
-        }),
-      });
-      if (res.ok) {
-        fetchModels();
-      }
-    } catch (error) {
-      console.error('Failed to add custom model:', error);
+    const res = await fetch(API_PATHS.customModels, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        modelId: model.modelId,
+        name: model.name,
+        description: model.description || undefined,
+        provider: model.provider,
+        baseUrl: model.baseUrl,
+        apiKey: model.apiKey,
+      }),
+    });
+    if (res.ok) {
+      fetchModels();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `添加失败 (${res.status})`);
     }
   }, [fetchModels]);
 
   const updateCustomModel = useCallback(async (id: string, updates: Partial<Omit<import('./types').CustomModel, 'id' | 'createdAt' | 'updatedAt'>>) => {
-    try {
-      const res = await fetch(`/api/custom-models/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          modelId: updates.modelId,
-          name: updates.name,
-          description: updates.description,
-          provider: updates.provider,
-          baseUrl: updates.baseUrl,
-          apiKey: updates.apiKey,
-        }),
-      });
-      if (res.ok) {
-        fetchModels();
-      }
-    } catch (error) {
-      console.error('Failed to update custom model:', error);
+    const res = await fetch(`${API_PATHS.customModels}/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        modelId: updates.modelId,
+        name: updates.name,
+        description: updates.description,
+        provider: updates.provider,
+        baseUrl: updates.baseUrl,
+        apiKey: updates.apiKey || undefined,
+      }),
+    });
+    if (res.ok) {
+      fetchModels();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `更新失败 (${res.status})`);
     }
   }, [fetchModels]);
 
   const deleteCustomModel = useCallback(async (id: string) => {
-    try {
-      const res = await fetch(`/api/custom-models/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        fetchModels();
-      }
-    } catch (error) {
-      console.error('Failed to delete custom model:', error);
+    const res = await fetch(`${API_PATHS.customModels}/${id}`, { method: 'DELETE' });
+    if (res.ok) {
+      fetchModels();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `删除失败 (${res.status})`);
     }
   }, [fetchModels]);
 

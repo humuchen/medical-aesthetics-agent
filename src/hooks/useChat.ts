@@ -1,10 +1,9 @@
 import { useState, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { Message, ToolCall, PermissionRequest, PermissionMode, Session, CustomAgent, ContentBlock } from '../types';
-
-const STORAGE_KEYS = {
-  draftInput: 'draftInput',
-};
+import { STORAGE_KEYS } from '../constants/storage';
+import { API_PATHS } from '../constants/api';
+import { TITLE_MAX_LENGTH, CHAT_ERROR_MESSAGE, PERMISSION_DENIED_MESSAGE } from '../constants/chat';
 
 interface UseChatOptions {
   currentSession: Session | undefined;
@@ -70,7 +69,7 @@ export function useChat(options: UseChatOptions) {
       
       const newSession: Session = {
         id: uuidv4(),
-        title: messageContent.slice(0, 30) + (messageContent.length > 30 ? '...' : ''),
+        title: messageContent.slice(0, TITLE_MAX_LENGTH) + (messageContent.length > TITLE_MAX_LENGTH ? '...' : ''),
         model: selectedModel,
         agentId: newChatOptions.agentId,
         cwd: newChatOptions.cwd || undefined,
@@ -133,7 +132,7 @@ export function useChat(options: UseChatOptions) {
     const systemPrompt = agent?.systemPrompt;
 
     try {
-      const response = await fetch('/api/chat', {
+      const response = await fetch(API_PATHS.chat, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -323,7 +322,7 @@ export function useChat(options: UseChatOptions) {
             ...s,
             messages: s.messages.map(m => 
               m.id === tempAssistantMessageId 
-                ? { ...m, content: '发生错误，请重试', isStreaming: false }
+                ? { ...m, content: CHAT_ERROR_MESSAGE, isStreaming: false }
                 : m
             )
           };
@@ -347,7 +346,7 @@ export function useChat(options: UseChatOptions) {
     
     console.log('[Permission] User allowed:', permissionRequest.requestId);
     
-    await fetch('/api/permission-response', {
+    await fetch(API_PATHS.permissionResponse, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -365,13 +364,13 @@ export function useChat(options: UseChatOptions) {
     
     console.log('[Permission] User denied:', permissionRequest.requestId);
     
-    await fetch('/api/permission-response', {
+    await fetch(API_PATHS.permissionResponse, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         requestId: permissionRequest.requestId,
         behavior: 'deny',
-        message: '用户拒绝了此操作'
+        message: PERMISSION_DENIED_MESSAGE
       })
     });
     

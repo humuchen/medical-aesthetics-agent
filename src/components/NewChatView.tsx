@@ -2,6 +2,7 @@ import { Bot } from 'lucide-react';
 import { APP_CONFIG } from '../config';
 import { Model, Agent, PermissionMode } from '../types';
 import { ICON_MAP } from '../utils/iconMap';
+import { EXAMPLE_PROMPTS } from '../constants/agent';
 
 interface NewChatViewProps {
   agents: Agent[];
@@ -16,14 +17,6 @@ interface NewChatViewProps {
   onSetPermissionMode: (mode: PermissionMode) => void;
   onExampleClick?: (text: string) => void;
 }
-
-// 医美运营常见提问示例
-const EXAMPLE_PROMPTS = [
-  '帮我分析上月各渠道获客成本（CAC）和 ROI，找出最该加投和该砍的渠道',
-  '基于会员消费数据做客户分层（新客/沉睡/高价值），并给出唤醒与复购策略',
-  '整合本月营收、项目结构与毛利，找出利润贡献最高的项目组合',
-  '梳理从曝光到复购的转化漏斗，定位流失最严重的环节并给优化建议',
-];
 
 export function NewChatView({
   agents,

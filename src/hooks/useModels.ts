@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Model, CustomModel } from '../types';
-
-const STORAGE_KEY = 'defaultModel';
+import { STORAGE_KEYS } from '../constants/storage';
+import { API_PATHS } from '../constants/api';
 
 // 将 CustomModel 转为 Model
 function customModelToModel(cm: CustomModel): Model {
@@ -17,12 +17,12 @@ export function useModels() {
   const [models, setModels] = useState<Model[]>([]);
   const [customModels, setCustomModels] = useState<CustomModel[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>(() => {
-    return localStorage.getItem(STORAGE_KEY) || '';
+    return localStorage.getItem(STORAGE_KEYS.defaultModel) || '';
   });
 
   const fetchCustomModels = useCallback(async () => {
     try {
-      const res = await fetch('/api/custom-models');
+      const res = await fetch(API_PATHS.customModels);
       const data = await res.json();
       const cms: CustomModel[] = (data.models || []).map((m: any) => ({
         id: m.id,
@@ -47,7 +47,7 @@ export function useModels() {
     try {
       // 并行获取 API 模型和自定义模型
       const [apiRes, cms] = await Promise.all([
-        fetch('/api/models').then(r => r.json()),
+        fetch(API_PATHS.models).then(r => r.json()),
         fetchCustomModels(),
       ]);
 
@@ -59,12 +59,12 @@ export function useModels() {
       setModels(allModels);
 
       if (allModels.length > 0 && !selectedModel) {
-        const savedDefault = localStorage.getItem(STORAGE_KEY);
+        const savedDefault = localStorage.getItem(STORAGE_KEYS.defaultModel);
         const modelToUse = savedDefault && allModels.some(m => m.modelId === savedDefault)
           ? savedDefault
           : (apiRes.defaultModel || allModels[0].modelId);
         setSelectedModel(modelToUse);
-        localStorage.setItem(STORAGE_KEY, modelToUse);
+        localStorage.setItem(STORAGE_KEYS.defaultModel, modelToUse);
       }
     } catch (error) {
       console.error('Failed to fetch models:', error);

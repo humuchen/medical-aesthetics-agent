@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { 
-  Dialog, 
-  Form, 
-  Input, 
-  Textarea, 
-  Button, 
+import {
+  Dialog,
+  Input,
+  Textarea,
+  Button,
   Card,
   Tooltip,
   Popconfirm,
@@ -17,7 +16,7 @@ import {
   CheckIcon
 } from 'tdesign-icons-react';
 import { Bot, Sparkles, Code, FileText, Globe, Lightbulb } from 'lucide-react';
-import { CustomAgent } from '../types';
+import { CustomAgent, PermissionMode } from '../types';
 
 interface AgentConfigProps {
   visible: boolean;
@@ -89,6 +88,7 @@ export function AgentConfigDialog({
     systemPrompt: '',
     icon: 'Bot',
     color: '#0052d9',
+    permissionMode: 'default' as PermissionMode,
   });
 
   const resetForm = () => {
@@ -98,6 +98,7 @@ export function AgentConfigDialog({
       systemPrompt: '',
       icon: 'Bot',
       color: '#0052d9',
+      permissionMode: 'default' as PermissionMode,
     });
     setEditingAgent(null);
     setIsCreating(false);
@@ -112,6 +113,7 @@ export function AgentConfigDialog({
       systemPrompt: agent.systemPrompt,
       icon: agent.icon || 'Bot',
       color: agent.color || '#0052d9',
+      permissionMode: agent.permissionMode || 'default',
     });
     setIsCreating(true);
   };
@@ -122,27 +124,36 @@ export function AgentConfigDialog({
       return;
     }
 
-    if (editingAgent) {
-      onUpdate(editingAgent.id, formData);
-      MessagePlugin.success('Agent 已更新');
-    } else {
-      onAdd(formData);
-      MessagePlugin.success('Agent 已创建');
+    try {
+      if (editingAgent) {
+        onUpdate(editingAgent.id, formData);
+        MessagePlugin.success('Agent 已更新');
+      } else {
+        onAdd(formData);
+        MessagePlugin.success('Agent 已创建');
+      }
+      resetForm();
+    } catch (error: any) {
+      MessagePlugin.error(error?.message || '操作失败，请重试');
     }
-    resetForm();
   };
 
   const handleUseTemplate = (template: typeof PRESET_TEMPLATES[0]) => {
     setFormData({
       ...template,
       description: template.description,
+      permissionMode: 'default' as PermissionMode,
     });
     setIsCreating(true);
   };
 
   const handleDelete = (id: string) => {
-    onDelete(id);
-    MessagePlugin.success('Agent 已删除');
+    try {
+      onDelete(id);
+      MessagePlugin.success('Agent 已删除');
+    } catch (error: any) {
+      MessagePlugin.error(error?.message || '删除失败，请重试');
+    }
   };
 
   const getIconComponent = (iconName: string) => {
@@ -173,24 +184,33 @@ export function AgentConfigDialog({
                 <Button variant="text" onClick={resetForm}>取消</Button>
               </div>
               
-              <Form labelAlign="top">
-                <Form.FormItem label="名称" requiredMark>
-                  <Input 
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium block mb-1" style={{ color: 'var(--td-text-color-secondary)' }}>
+                    名称 <span style={{ color: 'var(--td-error-color)' }}>*</span>
+                  </label>
+                  <Input
                     value={formData.name}
                     onChange={(v) => setFormData(prev => ({ ...prev, name: v as string }))}
                     placeholder="例如：代码助手"
                   />
-                </Form.FormItem>
-                
-                <Form.FormItem label="描述">
-                  <Input 
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium block mb-1" style={{ color: 'var(--td-text-color-secondary)' }}>
+                    描述
+                  </label>
+                  <Input
                     value={formData.description}
                     onChange={(v) => setFormData(prev => ({ ...prev, description: v as string }))}
                     placeholder="简短描述这个 Agent 的用途"
                   />
-                </Form.FormItem>
-                
-                <Form.FormItem label="图标和颜色">
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium block mb-1" style={{ color: 'var(--td-text-color-secondary)' }}>
+                    图标和颜色
+                  </label>
                   <div className="flex gap-4">
                     <div className="flex gap-2">
                       {PRESET_ICONS.map(({ name, icon: Icon }) => (
@@ -222,17 +242,20 @@ export function AgentConfigDialog({
                       ))}
                     </div>
                   </div>
-                </Form.FormItem>
-                
-                <Form.FormItem label="系统提示词" requiredMark>
-                  <Textarea 
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium block mb-1" style={{ color: 'var(--td-text-color-secondary)' }}>
+                    系统提示词 <span style={{ color: 'var(--td-error-color)' }}>*</span>
+                  </label>
+                  <Textarea
                     value={formData.systemPrompt}
                     onChange={(v) => setFormData(prev => ({ ...prev, systemPrompt: v as string }))}
                     placeholder="定义 Agent 的行为和能力..."
                     autosize={{ minRows: 4, maxRows: 8 }}
                   />
-                </Form.FormItem>
-              </Form>
+                </div>
+              </div>
               
               <div className="flex justify-end gap-2 pt-2">
                 <Button variant="outline" onClick={resetForm}>取消</Button>
@@ -332,14 +355,12 @@ export function AgentConfigDialog({
                               content="确定删除这个 Agent 吗？"
                               onConfirm={() => handleDelete(agent.id)}
                             >
-                              <Tooltip content="删除">
-                                <Button 
-                                  variant="text" 
-                                  shape="circle" 
-                                  size="small"
-                                  icon={<DeleteIcon />}
-                                />
-                              </Tooltip>
+                              <Button 
+                                variant="text" 
+                                shape="circle" 
+                                size="small"
+                                icon={<DeleteIcon />}
+                              />
                             </Popconfirm>
                           </div>
                         </div>

@@ -3,6 +3,7 @@ import { Select, Tooltip } from 'tdesign-react';
 import { ChatSender } from '@tdesign-react/chat';
 import { ChevronDownIcon, LockOnIcon, LockOffIcon, EditIcon, TaskIcon } from 'tdesign-icons-react';
 import { Model, PermissionMode } from '../types';
+import { PERMISSION_MODE_CONFIG } from '../constants/permission';
 
 interface ChatInputProps {
   inputValue: string;
@@ -17,42 +18,12 @@ interface ChatInputProps {
   onPermissionModeChange: (mode: PermissionMode) => void;
 }
 
-// 权限模式配置
-const PERMISSION_MODE_CONFIG: Record<PermissionMode, { 
-  label: string; 
-  shortLabel: string;
-  icon: React.ReactNode; 
-  color: string;
-  description: string;
-}> = {
-  'default': { 
-    label: '默认模式', 
-    shortLabel: '默认',
-    icon: <LockOnIcon />, 
-    color: '#0052d9',
-    description: '每次操作都需要确认'
-  },
-  'acceptEdits': { 
-    label: '自动编辑', 
-    shortLabel: '自动编辑',
-    icon: <EditIcon />, 
-    color: '#2ba471',
-    description: '自动允许文件编辑操作'
-  },
-  'plan': { 
-    label: '仅规划', 
-    shortLabel: '仅规划',
-    icon: <TaskIcon />, 
-    color: '#ed7b2f',
-    description: '只生成计划，不执行操作'
-  },
-  'bypassPermissions': { 
-    label: '全部允许', 
-    shortLabel: '全部允许',
-    icon: <LockOffIcon />, 
-    color: '#e34d59',
-    description: '跳过所有权限确认（危险）'
-  },
+// 权限模式图标映射
+const PERMISSION_MODE_ICONS: Record<PermissionMode, React.ReactNode> = {
+  'default': <LockOnIcon />,
+  'acceptEdits': <EditIcon />,
+  'plan': <TaskIcon />,
+  'bypassPermissions': <LockOffIcon />,
 };
 
 export function ChatInput({
@@ -147,7 +118,7 @@ export function ChatInput({
                 suffixIcon={<ChevronDownIcon />}
                 prefixIcon={
                   <span style={{ color: currentModeConfig.color }}>
-                    {currentModeConfig.icon}
+                    {PERMISSION_MODE_ICONS[permissionMode]}
                   </span>
                 }
                 popupProps={{
@@ -163,7 +134,7 @@ export function ChatInput({
                       label={config.shortLabel}
                     >
                       <div className="flex items-center gap-2">
-                        <span style={{ color: config.color }}>{config.icon}</span>
+                        <span style={{ color: config.color }}>{PERMISSION_MODE_ICONS[mode]}</span>
                         <span>{config.shortLabel}</span>
                       </div>
                     </Select.Option>
