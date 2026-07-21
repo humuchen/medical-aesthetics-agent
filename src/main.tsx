@@ -11,7 +11,7 @@ document.title = APP_CONFIG.name;
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <BrowserRouter basename="/medical-aesthetics-agent">
+    <BrowserRouter>
       <App />
     </BrowserRouter>
   </React.StrictMode>,
