@@ -1,9 +1,4 @@
 {
-  "functions": {
-    "api/main.ts": {
-      "includeFiles": "node_modules/better-sqlite3/build/Release/**"
-    }
-  },
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api/main" },
     { "source": "/(.*)", "destination": "/index.html" }

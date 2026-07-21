@@ -1,79 +1,70 @@
-import Database from 'better-sqlite3';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { createClient, LibsqlError } from '@libsql/client';
+import express from "express";
+import { query, unstable_v2_createSession, unstable_v2_authenticate, PermissionResult, CanUseTool } from "@tencent-ai/agent-sdk";
+import { v4 as uuidv4 } from "uuid";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-import fs from 'fs';
-
-// 数据库文件路径（Vercel 使用 /tmp，本地使用 data/）
-const dbDir = process.env.VERCEL ? '/tmp' : path.join(__dirname, '..', 'data');
-const dbPath = path.join(dbDir, 'chat.db');
-
-// 确保目录存在
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
-
-// 创建数据库连接
-const db: Database.Database = new Database(dbPath);
-
-// 启用 WAL 模式以提高性能
-db.pragma('journal_mode = WAL');
+// 创建 Turso 数据库客户端
+const db = createClient({
+  url: process.env.TURSO_DATABASE_URL || 'file:./data/chat.db',
+  authToken: process.env.TURSO_AUTH_TOKEN,
+});
 
 // 初始化数据库表
-db.exec(`
-  -- 会话表
-  CREATE TABLE IF NOT EXISTS sessions (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    model TEXT NOT NULL,
-    sdk_session_id TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
+async function initDatabase() {
+  try {
+    await db.executeBatch([
+      `CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        model TEXT NOT NULL,
+        sdk_session_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS messages (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+        content TEXT NOT NULL,
+        model TEXT,
+        created_at TEXT NOT NULL,
+        tool_calls TEXT,
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)`,
+      `CREATE TABLE IF NOT EXISTS custom_models (
+        id TEXT PRIMARY KEY,
+        model_id TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        description TEXT,
+        provider TEXT NOT NULL,
+        base_url TEXT NOT NULL,
+        api_key TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+    ]);
 
-  -- 消息表
-  CREATE TABLE IF NOT EXISTS messages (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-    content TEXT NOT NULL,
-    model TEXT,
-    created_at TEXT NOT NULL,
-    tool_calls TEXT,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-  );
+    // 迁移：添加 sdk_session_id 列（如果不存在）
+    try {
+      const tableInfo = await db.execute("PRAGMA table_info(sessions)");
+      const hasColumn = tableInfo.rows.some(col => col.name === 'sdk_session_id');
+      if (!hasColumn) {
+        await db.execute("ALTER TABLE sessions ADD COLUMN sdk_session_id TEXT");
+        console.log("[DB] Added sdk_session_id column to sessions table");
+      }
+    } catch (e) {
+      // 忽略错误（列可能已存在）
+    }
 
-  -- 为会话 ID 创建索引
-  CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
-
-  -- 自定义模型表
-  CREATE TABLE IF NOT EXISTS custom_models (
-    id TEXT PRIMARY KEY,
-    model_id TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    description TEXT,
-    provider TEXT NOT NULL,
-    base_url TEXT NOT NULL,
-    api_key TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-`);
-
-// 数据库迁移：添加 sdk_session_id 列（如果不存在）
-try {
-  const tableInfo = db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
-  const hasColumn = tableInfo.some(col => col.name === 'sdk_session_id');
-  if (!hasColumn) {
-    db.exec("ALTER TABLE sessions ADD COLUMN sdk_session_id TEXT");
-    console.log("[DB] Added sdk_session_id column to sessions table");
+    console.log("[DB] Database initialized successfully");
+  } catch (error) {
+    console.error("[DB] Initialization error:", error);
   }
-} catch (e) {
-  // 忽略错误（列可能已存在）
 }
+
+// 启动时初始化数据库
+initDatabase();
 
 // 类型定义
 export interface DbSession {
@@ -95,32 +86,47 @@ export interface DbMessage {
   tool_calls: string | null;
 }
 
+export interface DbCustomModel {
+  id: string;
+  model_id: string;
+  name: string;
+  description: string | null;
+  provider: string;
+  base_url: string;
+  api_key: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // ============= 会话操作 =============
 
 // 获取所有会话
-export function getAllSessions(): DbSession[] {
-  const stmt = db.prepare('SELECT * FROM sessions ORDER BY updated_at DESC');
-  return stmt.all() as DbSession[];
+export async function getAllSessions(): Promise<DbSession[]> {
+  const result = await db.execute('SELECT * FROM sessions ORDER BY updated_at DESC');
+  return result.rows as DbSession[];
 }
 
 // 获取单个会话
-export function getSession(id: string): DbSession | undefined {
-  const stmt = db.prepare('SELECT * FROM sessions WHERE id = ?');
-  return stmt.get(id) as DbSession | undefined;
+export async function getSession(id: string): Promise<DbSession | undefined> {
+  const result = await db.execute({
+    sql: 'SELECT * FROM sessions WHERE id = ?',
+    args: [id],
+  });
+  return result.rows[0] as DbSession | undefined;
 }
 
 // 创建会话
-export function createSession(session: DbSession): DbSession {
-  const stmt = db.prepare(`
-    INSERT INTO sessions (id, title, model, sdk_session_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-  stmt.run(session.id, session.title, session.model, session.sdk_session_id, session.created_at, session.updated_at);
+export async function createSession(session: DbSession): Promise<DbSession> {
+  await db.execute({
+    sql: `INSERT INTO sessions (id, title, model, sdk_session_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+    args: [session.id, session.title, session.model, session.sdk_session_id, session.created_at, session.updated_at],
+  });
   return session;
 }
 
 // 更新会话
-export function updateSession(id: string, updates: Partial<Pick<DbSession, 'title' | 'model' | 'sdk_session_id'>>): boolean {
+export async function updateSession(id: string, updates: Partial<Pick<DbSession, 'title' | 'model' | 'sdk_session_id'>>): Promise<boolean> {
   const fields: string[] = [];
   const values: any[] = [];
   
@@ -143,51 +149,52 @@ export function updateSession(id: string, updates: Partial<Pick<DbSession, 'titl
   values.push(new Date().toISOString());
   values.push(id);
   
-  const stmt = db.prepare(`UPDATE sessions SET ${fields.join(', ')} WHERE id = ?`);
-  const result = stmt.run(...values);
-  return result.changes > 0;
+  const result = await db.execute({
+    sql: `UPDATE sessions SET ${fields.join(', ')} WHERE id = ?`,
+    args: values,
+  });
+  return result.rowsAffected > 0;
 }
 
 // 删除会话
-export function deleteSession(id: string): boolean {
-  const stmt = db.prepare('DELETE FROM sessions WHERE id = ?');
-  const result = stmt.run(id);
-  return result.changes > 0;
+export async function deleteSession(id: string): Promise<boolean> {
+  const result = await db.execute({
+    sql: 'DELETE FROM sessions WHERE id = ?',
+    args: [id],
+  });
+  return result.rowsAffected > 0;
 }
 
 // ============= 消息操作 =============
 
 // 获取会话的所有消息
-export function getMessagesBySession(sessionId: string): DbMessage[] {
-  const stmt = db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC');
-  return stmt.all(sessionId) as DbMessage[];
+export async function getMessagesBySession(sessionId: string): Promise<DbMessage[]> {
+  const result = await db.execute({
+    sql: 'SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC',
+    args: [sessionId],
+  });
+  return result.rows as DbMessage[];
 }
 
 // 创建消息
-export function createMessage(message: DbMessage): DbMessage {
-  const stmt = db.prepare(`
-    INSERT INTO messages (id, session_id, role, content, model, created_at, tool_calls)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  stmt.run(
-    message.id,
-    message.session_id,
-    message.role,
-    message.content,
-    message.model,
-    message.created_at,
-    message.tool_calls
-  );
+export async function createMessage(message: DbMessage): Promise<DbMessage> {
+  await db.execute({
+    sql: `INSERT INTO messages (id, session_id, role, content, model, created_at, tool_calls)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    args: [message.id, message.session_id, message.role, message.content, message.model, message.created_at, message.tool_calls],
+  });
   
   // 更新会话的 updated_at
-  const updateStmt = db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?');
-  updateStmt.run(new Date().toISOString(), message.session_id);
+  await db.execute({
+    sql: 'UPDATE sessions SET updated_at = ? WHERE id = ?',
+    args: [new Date().toISOString(), message.session_id],
+  });
   
   return message;
 }
 
 // 更新消息内容
-export function updateMessage(id: string, updates: Partial<Pick<DbMessage, 'content' | 'tool_calls'>>): boolean {
+export async function updateMessage(id: string, updates: Partial<Pick<DbMessage, 'content' | 'tool_calls'>>): Promise<boolean> {
   const fields: string[] = [];
   const values: any[] = [];
   
@@ -204,111 +211,99 @@ export function updateMessage(id: string, updates: Partial<Pick<DbMessage, 'cont
   
   values.push(id);
   
-  const stmt = db.prepare(`UPDATE messages SET ${fields.join(', ')} WHERE id = ?`);
-  const result = stmt.run(...values);
-  return result.changes > 0;
+  const result = await db.execute({
+    sql: `UPDATE messages SET ${fields.join(', ')} WHERE id = ?`,
+    args: values,
+  });
+  return result.rowsAffected > 0;
 }
 
 // 删除消息
-export function deleteMessage(id: string): boolean {
-  const stmt = db.prepare('DELETE FROM messages WHERE id = ?');
-  const result = stmt.run(id);
-  return result.changes > 0;
+export async function deleteMessage(id: string): Promise<boolean> {
+  const result = await db.execute({
+    sql: 'DELETE FROM messages WHERE id = ?',
+    args: [id],
+  });
+  return result.rowsAffected > 0;
 }
 
 // 批量创建消息（用于保存对话）
-export function createMessages(messages: DbMessage[]): void {
-  const stmt = db.prepare(`
-    INSERT INTO messages (id, session_id, role, content, model, created_at, tool_calls)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  
-  const insertMany = db.transaction((msgs: DbMessage[]) => {
-    for (const msg of msgs) {
-      stmt.run(msg.id, msg.session_id, msg.role, msg.content, msg.model, msg.created_at, msg.tool_calls);
-    }
-  });
-  
-  insertMany(messages);
+export async function createMessages(messages: DbMessage[]): Promise<void> {
+  // libsql 不支持事务批量执行，逐条插入
+  for (const msg of messages) {
+    await db.execute({
+      sql: `INSERT INTO messages (id, session_id, role, content, model, created_at, tool_calls)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [msg.id, msg.session_id, msg.role, msg.content, msg.model, msg.created_at, msg.tool_calls],
+    });
+  }
 }
 
 // 清空所有数据
-export function clearAllData(): void {
-  db.exec('DELETE FROM messages');
-  db.exec('DELETE FROM sessions');
-  db.exec('DELETE FROM custom_models');
+export async function clearAllData(): Promise<void> {
+  await db.execute('DELETE FROM messages');
+  await db.execute('DELETE FROM sessions');
+  await db.execute('DELETE FROM custom_models');
 }
 
 // 获取数据库统计信息
-export function getDbStats(): {
+export async function getDbStats(): Promise<{
   sessions: number;
   messages: number;
   customModels: number;
   dbSizeKB: number;
   tables: string[];
-} {
-  const sessionCount = (db.prepare('SELECT COUNT(*) as count FROM sessions').get() as any).count;
-  const messageCount = (db.prepare('SELECT COUNT(*) as count FROM messages').get() as any).count;
-  const customModelCount = (db.prepare('SELECT COUNT(*) as count FROM custom_models').get() as any).count;
+}> {
+  const sessionResult = await db.execute('SELECT COUNT(*) as count FROM sessions');
+  const messageResult = await db.execute('SELECT COUNT(*) as count FROM messages');
+  const customModelResult = await db.execute('SELECT COUNT(*) as count FROM custom_models');
 
-  // 获取数据库文件大小
-  let dbSizeKB = 0;
-  try {
-    const stat = fs.statSync(dbPath);
-    dbSizeKB = Math.round(stat.size / 1024);
-  } catch {}
+  const sessionCount = (sessionResult.rows[0] as any)?.count || 0;
+  const messageCount = (messageResult.rows[0] as any)?.count || 0;
+  const customModelCount = (customModelResult.rows[0] as any)?.count || 0;
 
   // 获取表列表
-  const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{ name: string }>)
-    .map(t => t.name);
+  const tablesResult = await db.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
+  const tables = tablesResult.rows.map(t => t.name as string);
 
   return {
     sessions: sessionCount,
     messages: messageCount,
     customModels: customModelCount,
-    dbSizeKB,
+    dbSizeKB: 0, // 无法在云端获取文件大小
     tables,
   };
 }
 
 // ============= 自定义模型操作 =============
 
-export interface DbCustomModel {
-  id: string;
-  model_id: string;
-  name: string;
-  description: string | null;
-  provider: string;
-  base_url: string;
-  api_key: string;
-  created_at: string;
-  updated_at: string;
-}
-
 // 获取所有自定义模型
-export function getAllCustomModels(): DbCustomModel[] {
-  const stmt = db.prepare('SELECT * FROM custom_models ORDER BY created_at DESC');
-  return stmt.all() as DbCustomModel[];
+export async function getAllCustomModels(): Promise<DbCustomModel[]> {
+  const result = await db.execute('SELECT * FROM custom_models ORDER BY created_at DESC');
+  return result.rows as DbCustomModel[];
 }
 
 // 获取单个自定义模型
-export function getCustomModel(id: string): DbCustomModel | undefined {
-  const stmt = db.prepare('SELECT * FROM custom_models WHERE id = ?');
-  return stmt.get(id) as DbCustomModel | undefined;
+export async function getCustomModel(id: string): Promise<DbCustomModel | undefined> {
+  const result = await db.execute({
+    sql: 'SELECT * FROM custom_models WHERE id = ?',
+    args: [id],
+  });
+  return result.rows[0] as DbCustomModel | undefined;
 }
 
 // 创建自定义模型
-export function createCustomModel(model: DbCustomModel): DbCustomModel {
-  const stmt = db.prepare(`
-    INSERT INTO custom_models (id, model_id, name, description, provider, base_url, api_key, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  stmt.run(model.id, model.model_id, model.name, model.description, model.provider, model.base_url, model.api_key, model.created_at, model.updated_at);
+export async function createCustomModel(model: DbCustomModel): Promise<DbCustomModel> {
+  await db.execute({
+    sql: `INSERT INTO custom_models (id, model_id, name, description, provider, base_url, api_key, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [model.id, model.model_id, model.name, model.description, model.provider, model.base_url, model.api_key, model.created_at, model.updated_at],
+  });
   return model;
 }
 
 // 更新自定义模型
-export function updateCustomModel(id: string, updates: Partial<Pick<DbCustomModel, 'model_id' | 'name' | 'description' | 'provider' | 'base_url' | 'api_key'>>): boolean {
+export async function updateCustomModel(id: string, updates: Partial<Pick<DbCustomModel, 'model_id' | 'name' | 'description' | 'provider' | 'base_url' | 'api_key'>>): Promise<boolean> {
   const fields: string[] = [];
   const values: any[] = [];
 
@@ -325,22 +320,23 @@ export function updateCustomModel(id: string, updates: Partial<Pick<DbCustomMode
   values.push(new Date().toISOString());
   values.push(id);
 
-  const stmt = db.prepare(`UPDATE custom_models SET ${fields.join(', ')} WHERE id = ?`);
-  const result = stmt.run(...values);
-  return result.changes > 0;
+  const result = await db.execute({
+    sql: `UPDATE custom_models SET ${fields.join(', ')} WHERE id = ?`,
+    args: values,
+  });
+  return result.rowsAffected > 0;
 }
 
 // 删除自定义模型
-export function deleteCustomModel(id: string): boolean {
-  const stmt = db.prepare('DELETE FROM custom_models WHERE id = ?');
-  const result = stmt.run(id);
-  return result.changes > 0;
+export async function deleteCustomModel(id: string): Promise<boolean> {
+  const result = await db.execute({
+    sql: 'DELETE FROM custom_models WHERE id = ?',
+    args: [id],
+  });
+  return result.rowsAffected > 0;
 }
 
-
-import express from "express";
-import { query, unstable_v2_createSession, unstable_v2_authenticate, PermissionResult, CanUseTool } from "@tencent-ai/agent-sdk";
-import { v4 as uuidv4 } from "uuid";
+// ============= Express 应用 =============
 
 // 待处理的权限请求
 interface PendingPermission {
@@ -373,9 +369,9 @@ app.get("/api/health", (req, res) => {
 });
 
 // 数据库统计信息
-app.get("/api/db-stats", (req, res) => {
+app.get("/api/db-stats", async (req, res) => {
   try {
-    const stats = db.getDbStats();
+    const stats = await getDbStats();
     res.json(stats);
   } catch (error: any) {
     console.error("[DB Stats] Error:", error);
@@ -384,9 +380,9 @@ app.get("/api/db-stats", (req, res) => {
 });
 
 // 清空数据库
-app.delete("/api/db/clear", (req, res) => {
+app.delete("/api/db/clear", async (req, res) => {
   try {
-    db.clearAllData();
+    await clearAllData();
     cachedModels = [];
     res.json({ success: true, message: "数据库已清空" });
   } catch (error: any) {
@@ -575,9 +571,9 @@ app.get("/api/models", async (req, res) => {
 // ============= 自定义模型 API =============
 
 // 获取所有自定义模型
-app.get("/api/custom-models", (req, res) => {
+app.get("/api/custom-models", async (req, res) => {
   try {
-    const models = db.getAllCustomModels();
+    const models = await getAllCustomModels();
     // 脱敏 API Key
     const sanitized = models.map(m => ({
       ...m,
@@ -591,7 +587,7 @@ app.get("/api/custom-models", (req, res) => {
 });
 
 // 创建自定义模型
-app.post("/api/custom-models", (req, res) => {
+app.post("/api/custom-models", async (req, res) => {
   try {
     const { modelId, name, description, provider, baseUrl, apiKey } = req.body;
 
@@ -600,7 +596,7 @@ app.post("/api/custom-models", (req, res) => {
     }
 
     const now = new Date().toISOString();
-    const model = db.createCustomModel({
+    const model = await createCustomModel({
       id: uuidv4(),
       model_id: modelId,
       name,
@@ -628,12 +624,12 @@ app.post("/api/custom-models", (req, res) => {
 });
 
 // 更新自定义模型
-app.patch("/api/custom-models/:id", (req, res) => {
+app.patch("/api/custom-models/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { modelId, name, description, provider, baseUrl, apiKey } = req.body;
 
-    const success = db.updateCustomModel(id, {
+    const success = await updateCustomModel(id, {
       ...(modelId !== undefined && { model_id: modelId }),
       ...(name !== undefined && { name }),
       ...(description !== undefined && { description }),
@@ -654,10 +650,10 @@ app.patch("/api/custom-models/:id", (req, res) => {
 });
 
 // 删除自定义模型
-app.delete("/api/custom-models/:id", (req, res) => {
+app.delete("/api/custom-models/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const success = db.deleteCustomModel(id);
+    const success = await deleteCustomModel(id);
 
     if (!success) {
       return res.status(404).json({ error: "自定义模型不存在" });
@@ -673,16 +669,16 @@ app.delete("/api/custom-models/:id", (req, res) => {
 // ============= 会话 API =============
 
 // 获取所有会话（包含消息数量）
-app.get("/api/sessions", (req, res) => {
+app.get("/api/sessions", async (req, res) => {
   try {
-    const sessions = db.getAllSessions();
-    const sessionsWithMessages = sessions.map(session => {
-      const messages = db.getMessagesBySession(session.id);
+    const sessions = await getAllSessions();
+    const sessionsWithMessages = await Promise.all(sessions.map(async session => {
+      const messages = await getMessagesBySession(session.id);
       return {
         ...session,
         messageCount: messages.length
       };
-    });
+    }));
     res.json({ sessions: sessionsWithMessages });
   } catch (error: any) {
     console.error("[Sessions] Error:", error);
@@ -691,16 +687,16 @@ app.get("/api/sessions", (req, res) => {
 });
 
 // 获取单个会话及其消息
-app.get("/api/sessions/:sessionId", (req, res) => {
+app.get("/api/sessions/:sessionId", async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const session = db.getSession(sessionId);
+    const session = await getSession(sessionId);
     
     if (!session) {
       return res.status(404).json({ error: "会话不存在" });
     }
     
-    const messages = db.getMessagesBySession(sessionId);
+    const messages = await getMessagesBySession(sessionId);
     
     // 解析 tool_calls JSON
     const parsedMessages = messages.map(msg => ({
@@ -716,12 +712,12 @@ app.get("/api/sessions/:sessionId", (req, res) => {
 });
 
 // 创建新会话
-app.post("/api/sessions", (req, res) => {
+app.post("/api/sessions", async (req, res) => {
   try {
     const { model = defaultModel, title = "新对话" } = req.body;
     const now = new Date().toISOString();
     
-    const session = db.createSession({
+    const session = await createSession({
       id: uuidv4(),
       title,
       model,
@@ -738,12 +734,12 @@ app.post("/api/sessions", (req, res) => {
 });
 
 // 更新会话
-app.patch("/api/sessions/:sessionId", (req, res) => {
+app.patch("/api/sessions/:sessionId", async (req, res) => {
   try {
     const { sessionId } = req.params;
     const { title, model } = req.body;
     
-    const success = db.updateSession(sessionId, { title, model });
+    const success = await updateSession(sessionId, { title, model });
     
     if (!success) {
       return res.status(404).json({ error: "会话不存在" });
@@ -757,10 +753,10 @@ app.patch("/api/sessions/:sessionId", (req, res) => {
 });
 
 // 删除会话
-app.delete("/api/sessions/:sessionId", (req, res) => {
+app.delete("/api/sessions/:sessionId", async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const success = db.deleteSession(sessionId);
+    const success = await deleteSession(sessionId);
     
     if (!success) {
       return res.status(404).json({ error: "会话不存在" });
@@ -822,13 +818,13 @@ app.post("/api/chat", async (req, res) => {
   }
 
   // 获取或创建会话
-  let session = sessionId ? db.getSession(sessionId) : null;
+  let session = sessionId ? await getSession(sessionId) : null;
   const now = new Date().toISOString();
   
   if (!session) {
     // 创建新会话
     console.log(`[Chat] 创建新会话`);
-    session = db.createSession({
+    session = await createSession({
       id: sessionId || uuidv4(),
       title: message.slice(0, 30) + (message.length > 30 ? '...' : ''),
       model: model || defaultModel,
@@ -848,7 +844,7 @@ app.post("/api/chat", async (req, res) => {
 
   // 保存用户消息到数据库
   try {
-    db.createMessage({
+    await createMessage({
       id: userMessageId,
       session_id: session.id,
       role: 'user',
@@ -872,7 +868,8 @@ app.post("/api/chat", async (req, res) => {
   const defaultSystemPrompt = "你是「医美数据决策助手」，一名深耕医疗美容行业的运营数据分析与决策支持专家。整合医美机构分散在 HIS/CRM、企微、美团/大众点评、抖音、有赞及 Excel 台账中的多源数据，做经营与运营分析（营收毛利、客单价、到店率、升单率、复购率、渠道 CAC/ROI、转化漏斗等），并输出结构化、可落地的决策建议（核心结论→关键指标→数据洞察→行动建议→风险提示）。不编造数据，结论注明来源与口径；医美宣称需合规。能用工具（读取文件、Python/pandas、生成图表报告）就使用。";
 
   // ============= 检查是否为自定义模型 =============
-  const customModel = db.getAllCustomModels().find(m => m.model_id === selectedModel);
+  const customModels = await getAllCustomModels();
+  const customModel = customModels.find(m => m.model_id === selectedModel);
 
   if (customModel) {
     // 自定义模型：直接调用 OpenAI 兼容 API
@@ -892,7 +889,7 @@ app.post("/api/chat", async (req, res) => {
 
     try {
       // 获取历史消息构建对话上下文
-      const historyMessages = db.getMessagesBySession(session.id);
+      const historyMessages = await getMessagesBySession(session.id);
       const chatMessages: Array<{ role: string; content: string }> = [];
 
       // 添加系统提示词
@@ -969,7 +966,7 @@ app.post("/api/chat", async (req, res) => {
       res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
 
       // 保存助手消息
-      db.createMessage({
+      await createMessage({
         id: assistantMessageId,
         session_id: session.id,
         role: 'assistant',
@@ -980,9 +977,9 @@ app.post("/api/chat", async (req, res) => {
       });
 
       // 更新会话标题
-      const msgs = db.getMessagesBySession(session.id);
+      const msgs = await getMessagesBySession(session.id);
       if (msgs.length <= 2) {
-        db.updateSession(session.id, { 
+        await updateSession(session.id, { 
           title: message.slice(0, 30) + (message.length > 30 ? '...' : ''),
           model: selectedModel
         });
@@ -1113,7 +1110,7 @@ app.post("/api/chat", async (req, res) => {
         
         // 保存 SDK session_id 到数据库（如果是新的）
         if (newSdkSessionId && newSdkSessionId !== sdkSessionId) {
-          db.updateSession(session.id, { sdk_session_id: newSdkSessionId });
+          await updateSession(session.id, { sdk_session_id: newSdkSessionId });
           console.log(`[Stream] Saved SDK session_id to database`);
         }
       } else if (msg.type === "assistant") {
@@ -1189,7 +1186,7 @@ app.post("/api/chat", async (req, res) => {
     }
 
     // 保存助手消息到数据库
-    db.createMessage({
+    await createMessage({
       id: assistantMessageId,
       session_id: session.id,
       role: 'assistant',
@@ -1200,9 +1197,9 @@ app.post("/api/chat", async (req, res) => {
     });
 
     // 更新会话标题（如果是第一条消息）
-    const messages = db.getMessagesBySession(session.id);
+    const messages = await getMessagesBySession(session.id);
     if (messages.length <= 2) {
-      db.updateSession(session.id, { 
+      await updateSession(session.id, { 
         title: message.slice(0, 30) + (message.length > 30 ? '...' : ''),
         model: selectedModel
       });
@@ -1233,7 +1230,7 @@ if (!process.env.VERCEL) {
 ║     ◉ API 服务器已启动                      ║
 ║                                            ║
 ║     地址: http://localhost:${PORT}            ║
-║     数据库: SQLite (data/chat.db)          ║
+║     数据库: Turso (libsql)                 ║
 ║                                            ║
 ╚════════════════════════════════════════════╝
     `);
