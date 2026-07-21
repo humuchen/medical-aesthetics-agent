@@ -341,12 +341,6 @@ export function deleteCustomModel(id: string): boolean {
 import express from "express";
 import { query, unstable_v2_createSession, unstable_v2_authenticate, PermissionResult, CanUseTool } from "@tencent-ai/agent-sdk";
 import { v4 as uuidv4 } from "uuid";
-import path from "path";
-import { fileURLToPath } from "url";
-import { exec } from "child_process";
-import { promisify } from "util";
-
-const execAsync = promisify(exec);
 
 // 待处理的权限请求
 interface PendingPermission {
@@ -362,9 +356,6 @@ const pendingPermissions = new Map<string, PendingPermission>();
 
 // 权限请求超时时间（5分钟）
 const PERMISSION_TIMEOUT = 5 * 60 * 1000;
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
