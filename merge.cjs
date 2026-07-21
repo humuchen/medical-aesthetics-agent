@@ -1,0 +1,13 @@
+const fs = require('fs');
+let db = fs.readFileSync('api/db.ts', 'utf8');
+let app = fs.readFileSync('api/index.ts', 'utf8');
+console.log('db length:', db.length);
+console.log('app length:', app.length);
+console.log('db ends with:', JSON.stringify(db.slice(-30)));
+console.log('app has db import:', app.includes('import * as db'));
+db = db.replace(/export default db;\s*$/, '');
+app = app.replace(/import \* as db from ['"]\.\/db['"];\r?\n/, '');
+console.log('after replace - db length:', db.length);
+console.log('after replace - app length:', app.length);
+fs.writeFileSync('api/index.ts', db + '\n' + app);
+console.log('written');
