@@ -5,14 +5,15 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 数据库文件路径
-const dbPath = path.join(__dirname, '..', 'data', 'chat.db');
-
-// 确保 data 目录存在
 import fs from 'fs';
-const dataDir = path.dirname(dbPath);
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+
+// 数据库文件路径（Vercel 使用 /tmp，本地使用 data/）
+const dbDir = process.env.VERCEL ? '/tmp' : path.join(__dirname, '..', 'data');
+const dbPath = path.join(dbDir, 'chat.db');
+
+// 确保目录存在
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
 }
 
 // 创建数据库连接
