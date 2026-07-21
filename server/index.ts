@@ -894,9 +894,10 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-// 启动服务器
-app.listen(PORT, () => {
-  console.log(`
+// 启动服务器（仅在本地直接运行时）
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`
 ╔════════════════════════════════════════════╗
 ║                                            ║
 ║     ◉ API 服务器已启动                      ║
@@ -905,5 +906,8 @@ app.listen(PORT, () => {
 ║     数据库: SQLite (data/chat.db)          ║
 ║                                            ║
 ╚════════════════════════════════════════════╝
-  `);
-});
+    `);
+  });
+}
+
+export default app;
