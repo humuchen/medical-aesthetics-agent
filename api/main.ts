@@ -27,38 +27,40 @@ const db = createClient({
 // 初始化数据库表
 async function initDatabase() {
   try {
-    await db.executeBatch([
-      `CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        model TEXT NOT NULL,
-        sdk_session_id TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )`,
-      `CREATE TABLE IF NOT EXISTS messages (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-        content TEXT NOT NULL,
-        model TEXT,
-        created_at TEXT NOT NULL,
-        tool_calls TEXT,
-        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)`,
-      `CREATE TABLE IF NOT EXISTS custom_models (
-        id TEXT PRIMARY KEY,
-        model_id TEXT NOT NULL UNIQUE,
-        name TEXT NOT NULL,
-        description TEXT,
-        provider TEXT NOT NULL,
-        base_url TEXT NOT NULL,
-        api_key TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )`,
-    ]);
+    // 逐条执行 DDL（Turso HTTP 模式下 executeBatch 可能不稳定）
+    await db.execute(`CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      model TEXT NOT NULL,
+      sdk_session_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+
+    await db.execute(`CREATE TABLE IF NOT EXISTS messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+      content TEXT NOT NULL,
+      model TEXT,
+      created_at TEXT NOT NULL,
+      tool_calls TEXT,
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    )`);
+
+    await db.execute(`CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)`);
+
+    await db.execute(`CREATE TABLE IF NOT EXISTS custom_models (
+      id TEXT PRIMARY KEY,
+      model_id TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      description TEXT,
+      provider TEXT NOT NULL,
+      base_url TEXT NOT NULL,
+      api_key TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
 
     // 迁移：添加 sdk_session_id 列（如果不存在）
     try {
@@ -75,6 +77,7 @@ async function initDatabase() {
     console.log("[DB] Database initialized successfully");
   } catch (error) {
     console.error("[DB] Initialization error:", error);
+    throw error; // 抛出错误，让调用方知道初始化失败
   }
 }
 
