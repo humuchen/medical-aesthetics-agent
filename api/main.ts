@@ -4,8 +4,23 @@ import { query, unstable_v2_createSession, unstable_v2_authenticate, PermissionR
 import { v4 as uuidv4 } from "uuid";
 
 // 创建 Turso 数据库客户端
+// Vercel 环境必须配置 TURSO_DATABASE_URL，否则使用 /tmp 作为临时数据库（不持久化）
+function getDatabaseUrl(): string {
+  if (process.env.TURSO_DATABASE_URL) {
+    return process.env.TURSO_DATABASE_URL;
+  }
+  // Vercel 环境使用 /tmp（数据不持久化，仅用于测试）
+  if (process.env.VERCEL) {
+    console.warn('[DB] Warning: Using /tmp database - data will NOT persist between requests!');
+    console.warn('[DB] Please configure TURSO_DATABASE_URL for production.');
+    return 'file:/tmp/chat.db';
+  }
+  // 本地开发使用 data 目录
+  return 'file:./data/chat.db';
+}
+
 const db = createClient({
-  url: process.env.TURSO_DATABASE_URL || 'file:./data/chat.db',
+  url: getDatabaseUrl(),
   authToken: process.env.TURSO_AUTH_TOKEN,
 });
 
@@ -63,8 +78,29 @@ async function initDatabase() {
   }
 }
 
-// 启动时初始化数据库
-initDatabase();
+// 数据库初始化状态
+let dbInitialized = false;
+let dbInitPromise: Promise<void> | null = null;
+
+// 确保数据库已初始化（懒加载模式）
+async function ensureDatabaseInitialized(): Promise<void> {
+  if (dbInitialized) return;
+
+  // 使用 Promise 缓存避免并发初始化
+  if (!dbInitPromise) {
+    dbInitPromise = initDatabase();
+  }
+
+  await dbInitPromise;
+  dbInitialized = true;
+}
+
+// 启动时尝试初始化（不阻塞，但请求时会等待）
+initDatabase().then(() => {
+  dbInitialized = true;
+}).catch(err => {
+  console.error("[DB] Startup init failed:", err);
+});
 
 // 类型定义
 export interface DbSession {
@@ -358,6 +394,21 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(express.json());
+
+// 数据库初始化中间件
+app.use(async (req, res, next) => {
+  // 跳过健康检查等不需要数据库的路由
+  if (req.path === '/api/health' || req.path === '/api/check-login' || req.path === '/api/models') {
+    return next();
+  }
+  try {
+    await ensureDatabaseInitialized();
+    next();
+  } catch (error) {
+    console.error("[DB Middleware] Initialization failed:", error);
+    res.status(500).json({ error: "数据库初始化失败" });
+  }
+});
 
 // 缓存可用模型列表
 let cachedModels: Array<{ modelId: string; name: string; description?: string }> = [];
